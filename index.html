@@ -1,0 +1,73 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>DecibelLog - Medidor de Ruido Ambiental</title><style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:monospace}
+body{background:#090507;color:#f8fafc;display:flex;justify-content:center;padding:12px}
+.box{width:100%;max-width:440px;background:#170a0e;border:2px solid #ef4444;border-radius:14px;padding:14px}
+h1{font-size:14px;color:#fca5a5;text-align:center;margin-bottom:8px}
+canvas{width:100%;height:140px;background:#050203;border:1px solid #b91c1c;border-radius:8px;margin-bottom:8px}
+.db-box{text-align:center;font-size:22px;font-weight:bold;color:#4ade80;background:#050203;padding:10px;border-radius:8px;margin-bottom:8px;border:1px solid #450a0a}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+button{background:#b91c1c;color:#fff;border:none;border-radius:6px;padding:10px;font-size:11px;font-weight:bold}
+.b-mic{background:#dc2626}.b-rec{background:#0284c7}.b-sav{background:#059669}.b-exp{background:#475569}
+label{font-size:11px;color:#fca5a5;display:block;margin-bottom:2px}
+input[type=range]{width:100%;height:26px;margin-bottom:8px}
+input[type=text]{width:100%;background:#050203;color:#fca5a5;border:1px solid #450a0a;padding:8px;border-radius:6px;margin-bottom:6px;font-size:12px}
+.log{max-height:95px;overflow-y:auto;font-size:11px;color:#cbd5e1;margin-top:8px;border-top:1px solid #450a0a;padding-top:6px}
+</style></head><body><div class="box">
+<h1>DECIBELLOG | MONITOR DE RUIDO AMBIENTAL</h1>
+<div class="db-box" id="dbBox">NIVEL: -- dB | EN ESPERA</div>
+<canvas id="cv" width="400" height="140"></canvas>
+<div class="grid">
+<button class="b-mic" id="bMic">🎙 MEDIR AMBIENTE</button>
+<button class="b-rec" id="bRec">● GRABAR EVIDENCIA</button>
+</div>
+<label id="lblSens">SENSIBILIDAD CAPTACIÓN: 1.5x</label>
+<input type="range" id="rGain" min="1" max="8" step="0.5" value="1.5">
+<div id="player"></div>
+<input type="text" id="txtNota" placeholder="Ej. Lluvia en zinc, tráfico, local, taller...">
+<div class="grid">
+<button class="b-sav" id="bSav">GUARDAR REGISTRO</button>
+<button class="b-exp" id="bExp">EXPORTAR BITÁCORA</button>
+</div>
+<div class="log" id="logBox"></div></div>
+<script>
+var ctx=new(window.AudioContext||window.webkitAudioContext)(),micOn=false,stream=null,rec=null,chunks=[],sens=1.5,dbEst=35,nivelTxt="SILENCIO";
+var an=ctx.createAnalyser();an.fftSize=512;var dest=ctx.createMediaStreamDestination();var gainNode=ctx.createGain();gainNode.gain.value=1.5;
+document.getElementById("rGain").oninput=function(){sens=parseFloat(this.value);gainNode.gain.value=sens;document.getElementById("lblSens").textContent="SENSIBILIDAD CAPTACIÓN: "+sens.toFixed(1)+"x";};
+document.getElementById("bMic").onclick=async function(){
+if(ctx.state==="suspended")ctx.resume();
+if(micOn){stream.getTracks().forEach(t=>t.stop());micOn=false;this.textContent="🎙 MEDIR AMBIENTE";document.getElementById("dbBox").textContent="NIVEL: -- dB | PAUSADO";return;}
+stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false}});
+var src=ctx.createMediaStreamSource(stream);src.connect(gainNode);gainNode.connect(an);gainNode.connect(dest);
+micOn=true;this.textContent="⏹ PARAR MEDICIÓN";};
+document.getElementById("bRec").onclick=function(){
+if(!micOn)return alert("Primero pulsa MEDIR AMBIENTE");
+if(rec&&rec.state==="recording"){rec.stop();this.textContent="● GRABAR EVIDENCIA";return;}
+chunks=[];var m=MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"audio/webm";
+rec=new MediaRecorder(dest.stream,{mimeType:m});rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
+rec.onstop=()=>{document.getElementById("player").innerHTML='<audio controls playsinline src="'+URL.createObjectURL(new Blob(chunks,{type:m}))+'" style="width:100%;margin-bottom:8px"></audio>';};
+rec.start();this.textContent="■ DETENER GRAB.";};
+function render(){var a=JSON.parse(localStorage.getItem("decibellog_env")||"[]");document.getElementById("logBox").innerHTML=a.map(x=>"<div style='margin-bottom:3px'>• "+x+"</div>").join("");}
+render();
+document.getElementById("bSav").onclick=function(){
+var n=document.getElementById("txtNota").value.trim()||"Medición ambiental";
+var a=JSON.parse(localStorage.getItem("decibellog_env")||"[]");
+a.unshift("["+new Date().toLocaleDateString()+" "+new Date().toLocaleTimeString()+" | ~"+dbEst+" dB ("+nivelTxt+")] "+n);
+localStorage.setItem("decibellog_env",JSON.stringify(a.slice(0,60)));document.getElementById("txtNota").value="";render();};
+document.getElementById("bExp").onclick=function(){
+var a=JSON.parse(localStorage.getItem("decibellog_env")||"[]"),l=document.createElement("a");
+l.href=URL.createObjectURL(new Blob([a.join("\n")||"Sin registros"],{type:"text/plain"}));l.download="bitacora_ruido_ambiental.txt";l.click();};
+var cv=document.getElementById("cv"),c2=cv.getContext("2d"),hist=[];
+(function loop(){requestAnimationFrame(loop);c2.fillStyle="rgba(5,2,3,0.35)";c2.fillRect(0,0,400,140);
+if(micOn){var td=new Uint8Array(an.frequencyBinCount);an.getByteTimeDomainData(td);var sum=0;
+for(var i=0;i<td.length;i++){var v=(td[i]-128)/128;sum+=v*v;}
+var rms=Math.sqrt(sum/td.length);dbEst=Math.min(115,Math.max(30,Math.round(35+rms*140)));
+nivelTxt=dbEst<55?"TRANQUILO":(dbEst<75?"MODERADO":(dbEst<85?"ALTO":"EXCESIVO / RIESGO"));
+var box=document.getElementById("dbBox");box.textContent="~"+dbEst+" dB | "+nivelTxt;
+box.style.color=dbEst<55?"#4ade80":(dbEst<75?"#facc15":(dbEst<85?"#fb923c":"#ef4444"));
+hist.push(dbEst);if(hist.length>80)hist.shift();
+c2.strokeStyle=box.style.color;c2.lineWidth=2.5;c2.beginPath();
+for(var j=0;j<hist.length;j++){var x=(j/80)*400,y=140-((hist[j]-25)/95)*130;j===0?c2.moveTo(x,y):c2.lineTo(x,y);}c2.stroke();}})();
+</script></body></html>
